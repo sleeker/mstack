@@ -1,7 +1,7 @@
 # mstack
 A Proxmox LXC Container made from Debian with Sonarr Radarr and SabNZBD 
 
-LXC's are easier to deal with than docker... I just donmt want to juggle 4 different LXCs to get downloading going at the home lab... 
+LXC's are easier to deal with than docker... I just dont want to juggle 4 different LXCs to get downloading going at the home lab... 
 
 
 So Essentially this is a script. It will ask you for an LXC number and an IP address. From there it will create a debian LXC and Install the latest versions of SabNZBD Sonarr and Radarr.
