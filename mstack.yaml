@@ -1,0 +1,106 @@
+---
+- name: Build Core Media Monolith (mstack)
+  hosts: mstack
+  gather_facts: yes
+  tasks:
+    - name: 0. Repository Fix (Debian 13 Trixie)
+      shell: |
+        echo "deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list
+        echo "deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list
+        echo "deb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list
+        rm -f /etc/apt/sources.list.d/debian.sources
+        apt-get update
+      changed_when: true
+
+    - name: 1. Install prerequisites and system libraries
+      apt:
+        name: [curl, sqlite3, libmediainfo0v5, libatomic1, libstdc++6, mc, btop, git, tar, bzip2, p7zip-full, unrar, unzip]
+        state: present
+        update_cache: yes
+
+    - name: 2. Create internal media group and service users
+      block:
+        - group: { name: media, state: present }
+        - user: { name: "{{ item }}", groups: media, append: yes, system: yes }
+          loop: [sonarr, radarr, sabnzbdplus]
+
+    - name: 3. Create /opt directories
+      file: { path: "/opt/{{ item.path }}", state: directory, owner: "{{ item.owner }}", group: media, mode: '0775' }
+      loop:
+        - { path: 'sonarr', owner: 'sonarr' }
+        - { path: 'radarr', owner: 'radarr' }
+        - { path: 'sabnzbd', owner: 'sabnzbdplus' }
+
+    - name: 4. Install Sonarr and Radarr (Verified Binaries)
+      shell: |
+        curl -L "https://services.sonarr.tv/v1/download/main/latest?version=4&os=linux&arch=x64" -o /tmp/sonarr.tar.gz
+        tar -xzf /tmp/sonarr.tar.gz -C /opt/sonarr --strip-components=1
+        curl -L "https://radarr.servarr.com/v1/update/master/updatefile?os=linux&runtime=netcore&arch=x64" -o /tmp/radarr.tar.gz
+        tar -xzf /tmp/radarr.tar.gz -C /opt/radarr --strip-components=1
+        chown -R sonarr:media /opt/sonarr
+        chown -R radarr:media /opt/radarr
+
+    - name: 5. Install SABnzbd
+      apt: { name: sabnzbdplus, state: present }
+
+    - name: 6. Setup Custom Systemd Services (Bypasses broken Debian units)
+      copy:
+        dest: "/etc/systemd/system/{{ item.name }}.service"
+        content: |
+          [Unit]
+          Description={{ item.name }} Daemon
+          After=network.target
+          [Service]
+          User={{ item.user }}
+          Group=media
+          Type=simple
+          WorkingDirectory=/opt/{{ item.name }}
+          ExecStart={{ item.exec }}
+          Restart=always
+          [Install]
+          WantedBy=multi-user.target
+      loop:
+        - { name: 'sonarr', user: 'sonarr', exec: '/opt/sonarr/Sonarr -nobrowser -data=/opt/sonarr' }
+        - { name: 'radarr', user: 'radarr', exec: '/opt/radarr/Radarr -nobrowser -data=/opt/radarr' }
+        - { name: 'sabnzbd', user: 'sabnzbdplus', exec: '/usr/bin/sabnzbdplus --server 0.0.0.0:6767 --browser 0 --config-file /opt/sabnzbd/sabnzbd.ini' }
+
+    - name: 7. Setup Graphical Login Banner (Pre-login)
+      copy:
+        dest: /etc/issue
+        content: |
+          ================================================================
+            __  __  ____  _____  _     ____  _  __
+           |  \/  |/ ___||_   _|/ \   / ___|| |/ /
+           | |\/| |\___ \  | | / _ \ | |    | ' / 
+           | |  | | ___) | | |/ ___ \| |___ | . \ 
+           |_|  |_||____/  |_/_/   \_\\____||_|\_\
+           
+           CHRIS'S MEDIA MONOLITH (mstack)
+          ================================================================
+           Services: Sonarr (8989), Radarr (7878), SABnzbd (6767)
+           Default Root Password: mstackpass
+          ================================================================
+
+    - name: 8. Create Post-Login MOTD Script
+      copy:
+        dest: /usr/local/bin/motd_script.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          G='\033[0;32m'; CY='\033[0;36m'; Y='\033[1;33m'; NC='\033[0m'
+          IP=$(hostname -I | awk '{print $1}')
+          echo -e "${CY}================================================================${NC}"
+          echo -e "  Welcome to ${G}mstack${NC} (Chris's Monolith)"
+          echo -e "${CY}================================================================${NC}"
+          echo -e "  Sonarr:    http://$IP:8989   Radarr:    http://$IP:7878"
+          echo -e "  SABnzbd:   http://$IP:6767"
+          echo -e "  Root Pass: mstackpass"
+          echo -e "${CY}================================================================${NC}"
+
+    - name: 9. Finalize and Start
+      shell: |
+        systemctl stop sabnzbdplus || true
+        systemctl disable sabnzbdplus || true
+        systemctl daemon-reload
+        systemctl enable --now sonarr radarr sabnzbd
+        if ! grep -q "motd_script.sh" /root/.bashrc; then echo "/usr/local/bin/motd_script.sh" >> /root/.bashrc; fi
