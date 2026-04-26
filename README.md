@@ -16,6 +16,8 @@ and
 
 git pull https://github.com/sleeker/mstack.git
 
+cd mstack
+
 make the bootstrap executable 
 
 chmod 777 bootstrap.sh
